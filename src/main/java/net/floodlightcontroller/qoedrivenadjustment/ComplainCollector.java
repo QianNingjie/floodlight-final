@@ -27,7 +27,6 @@ public class ComplainCollector implements Runnable{
     }
 
     public void run(){
-        System.out.println("server start");
         ExecutorService executor = Executors.newCachedThreadPool();
         try(ServerSocket ss = new ServerSocket(listeningPort)){
             while(true){
@@ -54,15 +53,12 @@ public class ComplainCollector implements Runnable{
 
                     while(true){
                         String msg = receive();
-//                        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-//                        String msg = in.readLine();
                         System.out.println("bufferLevel = " + msg);
                         try{
                             Double bufferLevel = Double.parseDouble(msg);
                             Inet4Address ipv4 = (Inet4Address) socket.getInetAddress();
                             unsatClient.add(IPv4Address.of(ipv4.getAddress()));
                         } catch(NumberFormatException e){
-                            System.out.println("Oops");
                         }
 
                     }

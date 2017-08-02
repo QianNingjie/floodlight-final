@@ -48,13 +48,13 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 	private Random rand = new Random(47);
 	private Set<IPv4Address> unsatClient;
 	private static FlowRegistry flowRegistry;
-	private static DatapathId serverAp = DatapathId.of("00:00:00:00:00:00:00:02");
+	private static DatapathId serverAp = DatapathId.of("00:00:00:00:00:00:00:02");  //视频服务器所连的交换机dpid
 	private static final String ENABLED_STR = "enable";
 	private static final long FLOWSET_BITS = 52;
     private static final long FLOWSET_MAX = (long) (Math.pow(2, FLOWSET_BITS) - 1);
 
-    private static final IPv4Address server = IPv4Address.of("192.168.56.12");
-    private static final TransportPort serverPort = TransportPort.of(3000);
+    private static final IPv4Address server = IPv4Address.of("192.168.56.12");  //视频服务器ip
+    private static final TransportPort serverPort = TransportPort.of(3000);     //视频服务器端口
     private static final int CAPACITY = 10_000_000;
 	private static final int VIDEO_BANDWIDTH = 2500_000;
 
@@ -469,11 +469,6 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
         public void run() {
             if(unsatClient.isEmpty())
                 return;
-            else{
-                System.err.print("complain from:");
-                for(IPv4Address ip : unsatClient)
-                    System.err.println(ip);
-            }
 
             Map<DatapathId, Set<Link>> dpidToLinks = topologyService.getAllLinks();
             int n = dpidToLinks.keySet().size();
@@ -491,6 +486,7 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 
             if(statisticsMap == null || statisticsMap.size() == 0)
                 System.err.println("SflowCollector/StatisticsCollector doesn't open");
+
             Map<Link, Integer> linkIdle = new HashMap<>();  //链路剩余带宽
             Map<Link, Integer> linkBg = new HashMap<>();    //背景流占用的带宽（限速的上限）
 
@@ -517,13 +513,12 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
             List<Integer> flowDst = new ArrayList<>();
 
             for(IPv4Address ip : unsatClient){
-                System.err.println("unsatClient:" + ip);
+                System.out.println("complain from" + ip);
                 U64 cookie = flowRegistry.getCookie(ip);
                 if(cookie == null){
                     System.err.println("can't get client cookie");
                     return;
                 }
-                System.err.println("cookie:" + cookie);
 
                 int dst = flowRegistry.getClientAp(cookie);
                 if(dst == -1){
@@ -538,8 +533,8 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
             List<List<Link>> flowPath = new ArrayList<>();
             Map<Link, Integer> linkLimit = new HashMap<>();
             MaxFlowSolver.rearrangeFlow(links, n, linkIdle, linkBg, flowSrc, flowDst, VIDEO_BANDWIDTH, threshold, flowPath, linkLimit);
-            System.err.println("flowPath:" + flowPath);
-            System.err.println("linkLimit:" + linkLimit);
+//            System.err.println("flowPath:" + flowPath);
+//            System.err.println("linkLimit:" + linkLimit);
 
 
             if(flowPath.size() == 0)
@@ -568,7 +563,7 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 
                 PathId pathId = new PathId(first.getNodeId(),last.getNodeId());
                 Path path = new Path(pathId, nptList);
-                System.out.println("new path for " + ip + " : " + path);
+
                 boolean[] flag = new boolean[2];
                 flag[0] = true;
                 flag[1] = true;
@@ -587,7 +582,7 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
                     System.out.println(entry.getKey() + " limited to " + entry.getValue());
 
             unsatClient.clear();
-            System.err.println("done");
+//            System.err.println("done");
         }
     }
 

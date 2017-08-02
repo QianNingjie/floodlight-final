@@ -114,8 +114,8 @@ public class FlowRegistry {
         flowToPath.put(cookie, newPath);
 
         //remove vip flow from old links
-        System.err.println("oldPath : " + oldPath);
-        System.err.println("newPath : " + newPath);
+//        System.err.println("oldPath : " + oldPath);
+//        System.err.println("newPath : " + newPath);
         for(int i = 1; i < oldPath.size()-1; i += 2){
             NodePortTuple npt1 = oldPath.get(i);
             NodePortTuple npt2 = oldPath.get(i+1);
