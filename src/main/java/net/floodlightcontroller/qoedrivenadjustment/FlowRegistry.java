@@ -51,6 +51,22 @@ public class FlowRegistry {
         return flowIdGenerator;
     }
 
+    //获取链路上的背景流的match
+    Set<Match> getBgMatch(Link link){
+        if(linkToFlow.containsKey(link)){
+            Set<U64> ckis = linkToFlow.get(link)[1];
+            Set<Match> matches = new HashSet<>();
+            for(U64 cki : ckis)
+                if(flowMatch.containsKey(cki))
+                    matches.add(flowMatch.get(cki));
+                else
+                    System.err.println("cki -/> match");
+            return matches;
+        }else
+            System.err.println("link doesn't exist");
+        return null;
+    }
+
     //获取链路上的视频流数量
     int getNumOfVip(Link link){
         if(linkToFlow.containsKey(link))
