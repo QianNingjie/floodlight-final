@@ -77,6 +77,7 @@ public class OFMessageDecoder extends ByteToMessageDecoder {
 		List<OFMessage> list = null;
 		boolean first = true;
 		for (;;) {
+//			try{  //mod
 			OFMessage message = reader.readFrom(in);
 			if (message == null) {
 				break;
@@ -94,6 +95,7 @@ public class OFMessageDecoder extends ByteToMessageDecoder {
 				}
 				list.add(message);
 			}
+//			}catch (Exception e){} //mod
 		}
 		if (list != null) {
 			out.add(list);

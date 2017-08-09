@@ -3,6 +3,7 @@ package net.floodlightcontroller.qoedrivenadjustment;
 import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.routing.Path;
+import org.projectfloodlight.openflow.protocol.OFFlowRemovedReason;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.IPAddress;
@@ -35,13 +36,13 @@ public class FlowRegistry {
         ipToCki = new ConcurrentHashMap<>();
     }
 
-     static FlowRegistry getInstance() {
+    static FlowRegistry getInstance() {
         if (instance == null)
             instance = new FlowRegistry();
         return instance;
     }
 
-     synchronized long generateFlowId(Logger log) {
+    synchronized long generateFlowId(Logger log) {
         flowIdGenerator += 1;
         if (flowIdGenerator == FLOWSET_MAX) {
             flowIdGenerator = 0;
@@ -49,6 +50,13 @@ public class FlowRegistry {
         }
         log.debug("Generating flowset ID {}", flowIdGenerator);
         return flowIdGenerator;
+    }
+
+    boolean containsMatch(Match m){
+        for(Match match : flowMatch.values())
+            if(match.equals(m))
+                return true;
+        return false;
     }
 
     //获取链路上的背景流的match
@@ -151,10 +159,11 @@ public class FlowRegistry {
     }
 
 
-    void removeExpiredFlow(U64 cookie){
+    void removeExpiredFlow(U64 cookie, OFFlowRemovedReason removedReason){
 //        System.err.println("remove " + cookie);
         flowToPath.remove(cookie);
         flowMatch.remove(cookie);
+
         Iterator<U64> ckis = ipToCki.values().iterator();
         while(ckis.hasNext()){
             U64 cki = ckis.next();
@@ -165,8 +174,10 @@ public class FlowRegistry {
         Iterator<Set<U64>[]> it = linkToFlow.values().iterator();
         while(it.hasNext()){
             Set<U64>[] sets = it.next();
-            sets[0].remove(cookie);
+            boolean flag = sets[0].remove(cookie);
             sets[1].remove(cookie);
+            if(flag)
+                System.err.println("vip leave, cookie = " + cookie + "removed reason = " +removedReason);
         }
 
     }

@@ -27,6 +27,8 @@ import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.util.OFMessageUtils;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.action.OFActionEnqueue;
+import org.projectfloodlight.openflow.protocol.action.OFActionSetQueue;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.*;
@@ -38,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlightModule {
 	private static final Logger log = LoggerFactory.getLogger(QoEdrivenAdjustment.class);
+//	private static volatile boolean waitingRerange
 	
 	private ITopologyService topologyService;
 
@@ -143,6 +146,8 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
         IPv4Address[] clientIp = new IPv4Address[1];
         Match m = createMatchFromPacket(sw, srcPort, pi, cntx, flag, clientIp);
 
+        if(flag[1] && flowRegistry.containsMatch(m))
+            return;
 //        System.err.println(m);
         
         long user_fields = flowRegistry.generateFlowId(log);
@@ -154,7 +159,11 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 		List<NodePortTuple> woAp = null;
 		if(!srcSw.equals(dstSw)) {
 			List<Path> paths = routingEngineService.getPathsFast(srcSw, dstSw);
-			woAp = paths.get(rand.nextInt(paths.size())).getPath();
+			int num = paths.size();
+			if(num > 0)
+			    woAp = paths.get(rand.nextInt(paths.size())).getPath();
+			else
+			    System.err.println("unreachable");
 			nptList.addAll(woAp);
 		}
 		npt = new NodePortTuple(dstSw, dstPort);
@@ -178,6 +187,9 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
             	return;
 
             flowRegistry.register(cookie, m, path, woAp, flag[1] ? 0 : 1, clientIp);
+
+            if(flag[1])
+                System.err.println("vip registry " + cookie + " : " + m);
         } 
     }
 
@@ -397,11 +409,12 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 //		log.info("{} flow entry removed {}", sw, flowRemovedMessage);
 		
 		//流表删除理由为DELETE，是重路由时主动删除的，重路由后即完成对流记录的更新
-		if(flowRemovedMessage.getReason().equals(OFFlowRemovedReason.DELETE))
+        OFFlowRemovedReason removedReason = flowRemovedMessage.getReason();
+		if(removedReason.equals(OFFlowRemovedReason.DELETE))
 			return Command.CONTINUE;
 
         //正常离开网络的流，包括普通流和vip流
-		flowRegistry.removeExpiredFlow(cookie);  
+		flowRegistry.removeExpiredFlow(cookie, removedReason);
 		
 		return Command.CONTINUE;
 	}
@@ -460,15 +473,41 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 			super.startUp();
 			new Thread(new ComplainCollector(unsatClient)).start();
 			threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new Adjustment(),10,5, TimeUnit.SECONDS);
+//            threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new DumpStatistics(),10,5, TimeUnit.SECONDS);
+
 		}
 
 	}
 
+    private class DumpStatistics implements Runnable{
+
+        @Override
+        public void run() {
+            Map<NodePortTuple, SwitchPortBandwidth> map = statisticsService.getBandwidthConsumption();
+            Map<NodePortTuple,InterfaceStatistics> map2 = sflowCollectionService.getStatisticsMap();
+
+            System.out.println("dump statistics collected by SflowCollecter");
+            for(Map.Entry<NodePortTuple, InterfaceStatistics> entry : map2.entrySet())
+                System.out.println(entry.getKey() + " : " + entry.getValue().getIfOutOctets()*8);
+
+        }
+    }
+
+    public static volatile int tag = 0;
+
     private class Adjustment implements Runnable{
         @Override
         public void run() {
+            Map<NodePortTuple,InterfaceStatistics> map = sflowCollectionService.getStatisticsMap();
+
+            System.out.println("dump statistics collected by SflowCollecter");
+            for(Map.Entry<NodePortTuple, InterfaceStatistics> entry : map.entrySet())
+                System.out.println(entry.getKey() + " : " + entry.getValue().getIfOutOctets()*8);
+
             if(unsatClient.isEmpty())
                 return;
+
+            System.err.println("adjust");
 
             Map<DatapathId, Set<Link>> dpidToLinks = topologyService.getAllLinks();
             int n = dpidToLinks.keySet().size();
@@ -480,29 +519,41 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
             Set<Link> links = new HashSet<>();
             for(Set<Link> set : dpidToLinks.values())
                 links.addAll(set);
-            
-//            Map<NodePortTuple,InterfaceStatistics> statisticsMap = sflowCollectionService.getStatisticsMap();
-            Map<NodePortTuple, SwitchPortBandwidth> statisticsMap = statisticsService.getBandwidthConsumption();
+
+            Map<NodePortTuple,InterfaceStatistics> statisticsMap = sflowCollectionService.getStatisticsMap();
+//            Map<NodePortTuple, SwitchPortBandwidth> statisticsMap = statisticsService.getBandwidthConsumption();
 
             if(statisticsMap == null || statisticsMap.size() == 0)
                 System.err.println("SflowCollector/StatisticsCollector doesn't open");
 
             Map<Link, Integer> linkIdle = new HashMap<>();  //链路剩余带宽
             Map<Link, Integer> linkBg = new HashMap<>();    //背景流占用的带宽（限速的上限）
+            Map<Link, Integer> linkConsume = new HashMap<>(); //链路已占用带宽
 
             for(Link link : links){
                 NodePortTuple npt = new NodePortTuple(link.getSrc(),link.getSrcPort());
                 int outRate = 0;
                 if(statisticsMap.containsKey(npt)){
-                    outRate = (int)statisticsMap.get(npt).getBitsPerSecondTx().getValue();
-                    //outRate = (int)statisticsMap.get(npt).getIfOutOctets().doubleValue() * 8 ;
+//                    outRate = (int)statisticsMap.get(npt).getBitsPerSecondTx().getValue();
+                    outRate = (int)statisticsMap.get(npt).getIfOutOctets().doubleValue() * 8 ;
 //                    System.out.println(link + " --- " + outRate);
+                    linkConsume.put(link, outRate);
                 }
 
 
                 linkIdle.put(link, CAPACITY - outRate);
 
                 int cnt = flowRegistry.getNumOfVip(link);
+
+                if(cnt > 1 || cnt < 0){
+                    System.err.println(tag + "_cnt = " + cnt);
+                    System.err.println(link);
+                    Set<U64> ckis= flowRegistry.linkToFlow.get(link)[0];
+                    for(U64 cki : ckis)
+                        System.err.println(cki + " ---- " + flowRegistry.flowMatch.get(cki));
+                    System.err.println();
+
+                }
 
                 linkBg.put(link, outRate - VIDEO_BANDWIDTH * cnt);
             }
@@ -513,7 +564,7 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
             List<Integer> flowDst = new ArrayList<>();
 
             for(IPv4Address ip : unsatClient){
-                System.out.println("complain from" + ip);
+                System.out.println("complain from " + ip);
                 U64 cookie = flowRegistry.getCookie(ip);
                 if(cookie == null){
                     System.err.println("can't get client cookie");
@@ -529,24 +580,43 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
                     flowDst.add(dst);
             }
 
+            System.err.println(flowSrc + " -> " + flowDst);
+
             int threshold = 0;
             List<List<Link>> flowPath = new ArrayList<>();
             Map<Link, Integer> linkLimit = new HashMap<>();
-            MaxFlowSolver.rearrangeFlow(links, n, linkIdle, linkBg, flowSrc, flowDst, VIDEO_BANDWIDTH, threshold, flowPath, linkLimit);
-//            System.err.println("flowPath:" + flowPath);
-//            System.err.println("linkLimit:" + linkLimit);
+            boolean success = MaxFlowSolver.rearrangeFlow(links, n, linkIdle, linkBg, flowSrc, flowDst, VIDEO_BANDWIDTH, threshold, flowPath, linkLimit);
+
+            for(Link link : linkIdle.keySet()){
+                System.err.print(tag + "_(");
+                System.err.print(link.getSrc().getLong() + ", " + link.getSrcPort() + ") - "
+                        + "(" + link.getDst().getLong() + ", " + link.getDstPort() + ") "
+                        + ", idle = " + linkIdle.get(link) + ", consume = " + linkConsume.get(link)  + ", bg = " + linkBg.get(link) + "\n");
+            }
+
+            System.err.println(tag + "_" + success);
+            System.err.println(tag + "_flowPath: " + flowPath);
+            System.err.println(tag++ + "_linkLimit: " + linkLimit);
 
 
-            if(flowPath.size() == 0)
+            if(flowPath.size() == 0){
+                System.err.println("no available path");
                 return;
+            }
 
             int i = 0;
             for(IPv4Address ip : unsatClient){
                 U64 cookie = flowRegistry.getCookie(ip);
                 List<NodePortTuple> oldPath = flowRegistry.getOldPath(cookie);
+
                 NodePortTuple first = oldPath.get(0), last = oldPath.get(oldPath.size()-1);
 
                 List<Link> linkList = flowPath.get(i++);
+                if(linkList.size()==0){
+                    System.err.println("infeasible ---- " + ip);
+                    continue;
+                }
+
                 List<NodePortTuple> nptList = new ArrayList<>();
                 nptList.add(first);
                 if(linkList.size() > 0){
@@ -567,22 +637,108 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
                 boolean[] flag = new boolean[2];
                 flag[0] = true;
                 flag[1] = true;
-                pushRoute(path, flowRegistry.getMatch(cookie), null, null, cookie, flag  , OFFlowModCommand.ADD);
 
+//                long user_fields = flowRegistry.generateFlowId(log);
+//                U64 cookie = AppCookie.makeCookie(QDA_APP_ID, user_fields);
 
-                removeFlow(flowRegistry.getOldPath(cookie), cookie);
+                boolean routePushed = pushRoute(path, flowRegistry.getMatch(cookie), null, null, cookie, flag  , OFFlowModCommand.ADD);
+
+                if(routePushed) removeFlow(oldPath, cookie);
 
                 flowRegistry.update(cookie, oldPath, linkList, path);
 
             }
 
 
-            for(Map.Entry<Link, Integer> entry : linkLimit.entrySet())
-                if(entry.getValue() != 0)
+
+            for(Map.Entry<Link, Integer> entry : linkLimit.entrySet()){
+//                pushFlowMod(entry.getKey(), 1000000);
+                if(entry.getValue() != 0) {
+                    pushFlowMod(entry.getKey(), entry.getValue());
                     System.out.println(entry.getKey() + " limited to " + entry.getValue());
 
+                }
+            }
             unsatClient.clear();
-//          System.err.println("done");
+            System.err.println("done");
+        }
+
+        private void pushFlowMod(Link l, Integer limit){
+            Set<Match> matches = flowRegistry.getBgMatch(l);
+
+            long queueId = getCorrespondingQueueId(l, limit);
+            IOFSwitch sw = switchService.getSwitch(l.getSrc());
+            OFFactory myfactory = sw.getOFFactory();
+            OFFlowMod.Builder fmb = myfactory.buildFlowAdd();
+            OFFlowMod.Builder rmt = myfactory.buildFlowDelete();
+
+
+            ArrayList<OFAction> actions = new ArrayList<OFAction>();
+
+            /* For OpenFlow 1.0 */
+            if (myfactory.getVersion().compareTo(OFVersion.OF_10) == 0) {
+                OFActionEnqueue enqueue = myfactory.actions().buildEnqueue()
+                        .setPort(l.getSrcPort()) /* Must specify port number */
+                        .setQueueId(queueId)
+                        .build();
+                actions.add(enqueue);
+            } else { /* For OpenFlow 1.1+ */
+                OFActionSetQueue setQueue = myfactory.actions().buildSetQueue()
+                        .setQueueId(queueId)
+                        .build();
+                actions.add(setQueue);
+            }
+
+
+            System.err.println("1");
+            for(Match match : matches){
+                //删除相应Match的流表(通过match得到的TableId匹配)
+
+                System.err.println("1.1");
+                System.err.println(match);
+                if(match == null) System.err.println("match == null");
+                sw.write(rmt.setTableId(getMatchTableId(match)).build());
+                System.err.println("2");
+                //下发相应Match的流表
+                sw.write(fmb.setBufferId(OFBufferId.NO_BUFFER)
+                        .setActions(actions)
+                        .setIdleTimeout(30)
+                        .setHardTimeout(30)
+                        .setMatch(match)
+                        .setTableId(getMatchTableId(match))
+                        .setOutPort(l.getSrcPort())
+                        .setPriority(32676).build());
+            }
+            System.err.println("3");
+
+        }
+
+        private TableId getMatchTableId(Match m){
+            //table id max 255
+            IPv4Address srcIp = m.get(MatchField.IPV4_SRC);
+            IPv4Address dstIp = m.get(MatchField.IPV4_DST);
+            TransportPort dstPort =  m.get(MatchField.TCP_DST);
+            TransportPort srcPort = m.get(MatchField.TCP_SRC);
+            int big = 314159;
+            int hash = Math.abs(srcIp.getInt()) % big + Math.abs(dstIp.getInt()) % big +
+                    ((dstPort == null) ? 97 : dstPort.getPort())
+                    + ((srcPort == null) ? 31 : srcPort.getPort());
+            int tmp = hash % 256;
+            System.err.println(tmp);
+            return TableId.of(tmp);
+        }
+
+        /*
+        of10 queueid是与端口号有关的，每个端口都可以有自己的端口号
+        of13 queueid是全局唯一的，所以setQueue操作只需要制定端口号
+         = ofportNum * interval + bps2Id
+         */
+        private long getCorrespondingQueueId(Link l, Integer limit){
+            OFPort opt = l.getSrcPort();
+            final int INTERVAL = 40;
+            int bps2Id = (limit % 1000000 == 0) ? (limit / 1000000) : (limit / 1000000 + 1);
+            int ans = opt.getPortNumber() * INTERVAL + bps2Id;
+            return ans;
         }
     }
 

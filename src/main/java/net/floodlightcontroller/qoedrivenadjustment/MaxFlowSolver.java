@@ -171,6 +171,7 @@ public class MaxFlowSolver {
         }
 
 
+
         for(Map.Entry<Link, Integer> entry : linkIdle.entrySet())
             restCap[edgeTable.get(entry.getKey())] = entry.getValue();
 
@@ -196,12 +197,6 @@ public class MaxFlowSolver {
             int flow = SAP(flowSrc, sink);
             if(flow == dstCnt){
                 linkLimit.clear();
-                for(int i = 0; i < edgeNum; i++){
-                    int use = e[2*i+1].c * bandwidth + threshold;
-                    int limit = Math.max(0, use - restCap[i]);
-                    if(limit != 0)
-                        linkLimit.put(edgeIndexTable.get(i), limit);
-                }
 
                 flowPath.clear();
                 for(int i = 0; i < dstCnt; i++){
@@ -216,7 +211,7 @@ public class MaxFlowSolver {
         }else{
             initGraph(nodeNum + 1, edgeNum + dstCnt);
             for(int i = 0; i < edgeNum; i++){
-                int rest = restCap[i] + Math.min(padding, bgCap[i] - threshold);
+                int rest = Math.max(restCap[i] + Math.min(padding, bgCap[i] - threshold),0);
                 addLink(src[i], dst[i], rest / bandwidth);
             }
             int sink = nodeNum + 1;
@@ -225,12 +220,13 @@ public class MaxFlowSolver {
             int flow = SAP(flowSrc, sink);
             if(flow == dstCnt){
                 linkLimit.clear();
-                for(int i = 0; i < edgeNum; i++){
+                for(int i = 0; i < edgeNum; i++)
+                    if(e[2*i+1].c != 0){
                     int use = e[2*i+1].c * bandwidth + threshold;
                     int limit = Math.max(0, use - restCap[i]);
                     if(limit != 0)
                         linkLimit.put(edgeIndexTable.get(i), limit);
-                }
+                    }
 
                 flowPath.clear();
                 for(int i = 0; i < dstCnt; i++){
