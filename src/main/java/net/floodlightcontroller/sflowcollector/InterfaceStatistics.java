@@ -8,7 +8,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 
 public class InterfaceStatistics {
-	public static final String ALLJSONPROPERTIES = "ifdirection ifinmulticastpkts ifinpkts ifindex ifindiscards ifinerrors ifinoctets ifinutilization ifinmutilcastpkts ifoutdiscards ifouterrors ifoutoctets ifoututilization ifoutpkts ifspeed iftype";
+	public static final String ALLJSONPROPERTIES = "ifname ifdirection ifinmulticastpkts ifinpkts ifindex ifindiscards ifinerrors ifinoctets ifinutilization ifinmutilcastpkts ifoutdiscards ifouterrors ifoutoctets ifoututilization ifoutpkts ifspeed iftype";
 	
 	//注释部分属于自定义及比较重要的端口参数
 	private Integer ifIndex;  // sflow中的端口号
@@ -31,9 +31,8 @@ public class InterfaceStatistics {
 	private String time;
 	public InterfaceStatistics() { }
 	
-	public InterfaceStatistics(Integer ifIndex, String ifName) {
+	public InterfaceStatistics(Integer ifIndex) {
 		this.ifIndex = ifIndex;
-		this.ifName = ifName;
 		SimpleDateFormat df=new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
 		this.time=df.format(new Date());
 	}	
@@ -68,7 +67,10 @@ public class InterfaceStatistics {
 		time=DateFormatUtils.format(new Date(),
 				"yyyy/MM/dd/ HH:mm:ss");	
 		try {
-			if (jsonProp.contains("iftype")) {
+			if (jsonProp.contains("ifname")) {
+				ifName = jo.getString(jsonProp);
+				//System.err.println("isName");
+			} else if (jsonProp.contains("iftype")) {
 				ifType = jo.getString(jsonProp);
 			} else if (jsonProp.contains("ifspeed")) {
 				ifSpeed = jo.getDouble(jsonProp);

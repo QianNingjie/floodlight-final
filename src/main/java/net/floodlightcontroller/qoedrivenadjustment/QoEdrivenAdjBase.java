@@ -134,7 +134,6 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
      *            Switch that the packet came in from
      * @param pi
      *            The packet that came in
-     * @param decision
      *            Any decision made by a policy engine
      */
     public abstract Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx);
@@ -233,7 +232,7 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
 
             fmb.setMatch(mb.build());
             if(flag[1])
-                fmb.setIdleTimeout(20);
+                fmb.setIdleTimeout(0);
             else
                 fmb.setIdleTimeout(FLOWMOD_DEFAULT_IDLE_TIMEOUT);
 
