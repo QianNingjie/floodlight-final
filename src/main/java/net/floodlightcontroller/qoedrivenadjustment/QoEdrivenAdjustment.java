@@ -664,16 +664,20 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
         }
 
         private void pushFlowMod(Link l, Integer limit){
+
             Set<Match> matches = flowRegistry.getBgMatch(l);
+            Map<Match, U64> mp = flowRegistry.getBgMatch2Ck(l);
 
             long queueId = getCorrespondingQueueId(l, limit);
-            IOFSwitch sw = switchService.getSwitch(l.getSrc());
-            OFFactory myfactory = sw.getOFFactory();
+            IOFSwitch swIn = switchService.getSwitch(l.getSrc());
+//            IOFSwitch swOut = switchService.getSwitch(l.getDst());
+
+            OFFactory myfactory = swIn.getOFFactory();
             OFFlowMod.Builder fmb = myfactory.buildFlowAdd();
             OFFlowMod.Builder rmt = myfactory.buildFlowDelete();
 
 
-            ArrayList<OFAction> actions = new ArrayList<OFAction>();
+            ArrayList<OFAction> actionsLinkSrcPort = new ArrayList<OFAction>();
 
             /* For OpenFlow 1.0 */
             if (myfactory.getVersion().compareTo(OFVersion.OF_10) == 0) {
@@ -681,37 +685,35 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
                         .setPort(l.getSrcPort()) /* Must specify port number */
                         .setQueueId(queueId)
                         .build();
-                actions.add(enqueue);
+                actionsLinkSrcPort.add(enqueue);
+
             } else { /* For OpenFlow 1.1+ */
                 OFActionSetQueue setQueue = myfactory.actions().buildSetQueue()
                         .setQueueId(queueId)
                         .build();
-                actions.add(setQueue);
+                actionsLinkSrcPort.add(setQueue);
+
             }
 
 
-            System.err.println("1");
             for(Match match : matches){
                 //删除相应Match的流表(通过match得到的TableId匹配)
-
-                System.err.println("1.1");
-                System.err.println(match);
-                if(match == null) System.err.println("match == null");
-                sw.write(rmt.setTableId(getMatchTableId(match)).build());
-                System.err.println("2");
+                swIn.write(rmt.setCookie(mp.get(match)).build());
                 //下发相应Match的流表
-                sw.write(fmb.setBufferId(OFBufferId.NO_BUFFER)
-                        .setActions(actions)
+                swIn.write(fmb.setBufferId(OFBufferId.NO_BUFFER)
+                        .setActions(actionsLinkSrcPort)
                         .setIdleTimeout(30)
                         .setHardTimeout(30)
                         .setMatch(match)
-                        .setTableId(getMatchTableId(match))
+                        .setCookie(mp.get(match))
                         .setOutPort(l.getSrcPort())
                         .setPriority(32676).build());
             }
-            System.err.println("3");
 
         }
+
+
+
 
         private TableId getMatchTableId(Match m){
             //table id max 255

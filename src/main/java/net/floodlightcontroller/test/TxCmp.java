@@ -79,7 +79,7 @@ public class TxCmp implements IFloodlightModule {
 
             int n = 100;
 
-            for(int i = 0; i < 5;){
+            for(int i = 0; i < 100;){
                 map = statisticsService.getBandwidthConsumption();
                 map2 =sflowCollectionService.getStatisticsMap();
 
@@ -153,7 +153,7 @@ public class TxCmp implements IFloodlightModule {
                 for(Map.Entry<NodePortTuple, List<Integer>> entry : txMap1.entrySet()){
                     NodePortTuple key = entry.getKey();
                     List<Integer> list = entry.getValue();
-                    out1.print("(" + key.getNodeId().getLong() + ", " + key.getPortId() + ")\t");
+                    out1.print("statistics_s" + key.getNodeId().getLong() + "-eth" + key.getPortId() + "\t");
                     for(Integer tx : list)
                         out1.print(tx + "\t");
 
@@ -163,7 +163,7 @@ public class TxCmp implements IFloodlightModule {
                 for(Map.Entry<NodePortTuple, List<Integer>> entry : txMap2.entrySet()){
                     NodePortTuple key = entry.getKey();
                     List<Integer> list = entry.getValue();
-                    out2.print("(" + key.getNodeId().getLong() + ", " + key.getPortId() + ")\t");
+                    out2.print("sflow_s" + key.getNodeId().getLong() + "-eth" + key.getPortId() + "\t");
                     for(Integer tx : list)
                         out2.print(tx + "\t");
                     out2.write("\n");

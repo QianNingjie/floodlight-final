@@ -59,6 +59,21 @@ public class FlowRegistry {
         return false;
     }
 
+    Map<Match, U64> getBgMatch2Ck(Link link){
+        if(linkToFlow.containsKey(link)){
+            Set<U64> ckis = linkToFlow.get(link)[1];
+            Map<Match, U64> matches = new HashMap<>();
+            for(U64 cki : ckis)
+                if(flowMatch.containsKey(cki))
+                    matches.put(flowMatch.get(cki), cki);
+                else
+                    System.err.println("cki -/> match");
+            return matches;
+        }else
+            System.err.println("link doesn't exist");
+        return null;
+    }
+
     //获取链路上的背景流的match
     Set<Match> getBgMatch(Link link){
         if(linkToFlow.containsKey(link)){
