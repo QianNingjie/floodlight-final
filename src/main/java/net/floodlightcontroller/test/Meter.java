@@ -6,6 +6,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.core.util.AppCookie;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.instruction.OFInstruction;
@@ -16,6 +17,8 @@ import org.projectfloodlight.openflow.protocol.meterband.OFMeterBand;
 import org.projectfloodlight.openflow.protocol.meterband.OFMeterBandDrop;
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFPort;
+import org.projectfloodlight.openflow.types.U64;
+import org.simpleframework.http.Cookie;
 
 import java.util.*;
 
@@ -91,6 +94,24 @@ public class Meter implements IFloodlightModule {
             }catch (InterruptedException e){}
 
         }
+    }
+
+    public void removeFlow(){
+        DatapathId dpid = DatapathId.of(1);
+        IOFSwitch sw = switchService.getSwitch(dpid);
+
+        long user_fields = 1;
+        U64 cookie = AppCookie.makeCookie(508, user_fields);
+        OFFlowMod.Builder fmb = sw.getOFFactory().buildFlowDelete();
+//        fmb.setMatch(match);
+        fmb.setCookie(cookie);
+        fmb.setOutPort(OFPort.ANY);
+        sw.write(fmb.build());
+        System.err.println("remove flow entry" + cookie);
+
+
+
+//        sw.write()
     }
 
     public void sendFlowMod(DatapathId swId){

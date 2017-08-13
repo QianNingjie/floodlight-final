@@ -24,10 +24,12 @@ import net.floodlightcontroller.statistics.IStatisticsService;
 import net.floodlightcontroller.statistics.SwitchPortBandwidth;
 import net.floodlightcontroller.threadpool.IThreadPoolService;
 import net.floodlightcontroller.topology.ITopologyService;
+import net.floodlightcontroller.util.MatchUtils;
 import net.floodlightcontroller.util.OFMessageUtils;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.action.OFActionEnqueue;
+import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
 import org.projectfloodlight.openflow.protocol.action.OFActionSetQueue;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
@@ -162,9 +164,12 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 			int num = paths.size();
 			if(num > 0)
 			    woAp = paths.get(rand.nextInt(paths.size())).getPath();
-			else
+			else{
 			    System.err.println("unreachable");
-			nptList.addAll(woAp);
+                System.err.println(srcSw + " " + srcPort + " : " + dstSw + " " + dstPort);
+
+			}
+			if(woAp != null) nptList.addAll(woAp);
 		}
 		npt = new NodePortTuple(dstSw, dstPort);
 		nptList.add(npt);
@@ -188,8 +193,10 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 
             flowRegistry.register(cookie, m, path, woAp, flag[1] ? 0 : 1, clientIp);
 
-            if(flag[1])
+            if(flag[1]){
                 System.err.println("vip registry " + cookie + " : " + m);
+                System.err.println(nptList);
+            }
         } 
     }
 
@@ -471,25 +478,37 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 	public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
 		if(isEnabled){
 			super.startUp();
+
+
 			new Thread(new ComplainCollector(unsatClient)).start();
 			threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new Adjustment(),10,5, TimeUnit.SECONDS);
-//            threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new DumpStatistics(),10,5, TimeUnit.SECONDS);
+//            threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new RemoveFlow(),20,5000, TimeUnit.SECONDS);
 
 		}
 
 	}
 
-    private class DumpStatistics implements Runnable{
-
+    private class RemoveFlow implements Runnable{
         @Override
         public void run() {
-            Map<NodePortTuple, SwitchPortBandwidth> map = statisticsService.getBandwidthConsumption();
-            Map<NodePortTuple,InterfaceStatistics> map2 = sflowCollectionService.getStatisticsMap();
+            DatapathId dpid = DatapathId.of(1);
+            IOFSwitch sw = switchService.getSwitch(dpid);
 
-            System.out.println("dump statistics collected by SflowCollecter");
-            for(Map.Entry<NodePortTuple, InterfaceStatistics> entry : map2.entrySet())
-                System.out.println(entry.getKey() + " : " + entry.getValue().getIfOutOctets()*8);
 
+            long user_fields = 11;
+            U64 cookie = AppCookie.makeCookie(508, user_fields);
+            OFFlowMod.Builder fmb = sw.getOFFactory().buildFlowDelete();
+            Match.Builder mb = sw.getOFFactory().buildMatch();
+            MacAddress dst = MacAddress.of("00:00:00:00:00:01");
+            MacAddress src = MacAddress.of("00:00:00:00:00:02");
+
+            mb.setExact(MatchField.ETH_SRC, src)
+                    .setExact(MatchField.ETH_DST, dst);
+            fmb.setMatch(mb.build());
+            //fmb.setCookie(cookie);
+            //fmb.setOutPort(OFPort.ANY);
+            sw.write(fmb.build());
+            System.err.println("remove flow entry" + cookie);
         }
     }
 
@@ -498,14 +517,16 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
     private class Adjustment implements Runnable{
         @Override
         public void run() {
-            Map<NodePortTuple,InterfaceStatistics> map = sflowCollectionService.getStatisticsMap();
-
-            System.out.println("dump statistics collected by SflowCollecter");
-            for(Map.Entry<NodePortTuple, InterfaceStatistics> entry : map.entrySet())
-                System.out.println(entry.getKey() + " : " + entry.getValue().getIfOutOctets()*8);
+//            Map<NodePortTuple,InterfaceStatistics> map = sflowCollectionService.getStatisticsMap();
+//
+//            System.out.println("dump statistics collected by SflowCollecter");
+//            for(Map.Entry<NodePortTuple, InterfaceStatistics> entry : map.entrySet())
+//                System.out.println(entry.getKey() + " : " + entry.getValue().getIfOutOctets()*8);
 
             if(unsatClient.isEmpty())
                 return;
+
+            System.err.println(unsatClient);
 
             System.err.println("adjust");
 
@@ -586,7 +607,7 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
             List<List<Link>> flowPath = new ArrayList<>();
             Map<Link, Integer> linkLimit = new HashMap<>();
             boolean success = MaxFlowSolver.rearrangeFlow(links, n, linkIdle, linkBg, flowSrc, flowDst, VIDEO_BANDWIDTH, threshold, flowPath, linkLimit);
-
+            System.err.println("success ? " + success);
             for(Link link : linkIdle.keySet()){
                 System.err.print(tag + "_(");
                 System.err.print(link.getSrc().getLong() + ", " + link.getSrcPort() + ") - "
@@ -619,17 +640,29 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
 
                 List<NodePortTuple> nptList = new ArrayList<>();
                 nptList.add(first);
-                if(linkList.size() > 0){
-                    Link link = linkList.get(0);
-                    nptList.add(new NodePortTuple(link.getSrc(),link.getSrcPort()));
-                }
 
+
+                boolean isSame = false;
+                int k = 0, r = oldPath.size() - 2;
                 for(int j = 0; j < linkList.size(); j++){
                     Link link = linkList.get(j);
-                    nptList.add(new NodePortTuple(link.getDst(), link.getDstPort()));
+                    NodePortTuple npt1 = new NodePortTuple(link.getSrc(),link.getSrcPort());
+                    NodePortTuple npt2 = new NodePortTuple(link.getDst(), link.getDstPort());
+                    nptList.add(npt1);
+                    nptList.add(npt2);
+                    if(k <= r && oldPath.get(++k).equals(npt1) &&  oldPath.get(k++).equals(npt2))
+                        isSame = true;
+                    else
+                        isSame = false;
                 }
 
+                if(r != 2 * linkList.size())
+                    isSame = false;
+                if(isSame)
+                    System.err.println("new path is same as the old one");
+
                 nptList.add(last);
+
 
                 PathId pathId = new PathId(first.getNodeId(),last.getNodeId());
                 Path path = new Path(pathId, nptList);
@@ -638,81 +671,158 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
                 flag[0] = true;
                 flag[1] = true;
 
-//                long user_fields = flowRegistry.generateFlowId(log);
-//                U64 cookie = AppCookie.makeCookie(QDA_APP_ID, user_fields);
+                long user_fields = flowRegistry.generateFlowId(log);
+                U64 newCookie = AppCookie.makeCookie(QDA_APP_ID, user_fields);
+                System.err.println(newCookie);
 
-                boolean routePushed = pushRoute(path, flowRegistry.getMatch(cookie), null, null, cookie, flag  , OFFlowModCommand.ADD);
 
-                if(routePushed) removeFlow(oldPath, cookie);
+                boolean routePushed = pushRoute(path, flowRegistry.getMatch(cookie), null, null, newCookie, flag  , OFFlowModCommand.ADD);
 
-                flowRegistry.update(cookie, oldPath, linkList, path);
+
+                removeFlow(oldPath, cookie);
+
+
+                flowRegistry.update(cookie, newCookie, oldPath, linkList, path, ip);
 
             }
 
 
 
+            Map<U64, Integer> cki2limit = new HashMap<>();
             for(Map.Entry<Link, Integer> entry : linkLimit.entrySet()){
-//                pushFlowMod(entry.getKey(), 1000000);
                 if(entry.getValue() != 0) {
-                    pushFlowMod(entry.getKey(), entry.getValue());
-                    System.out.println(entry.getKey() + " limited to " + entry.getValue());
-
+                    Set<U64> cki = flowRegistry.getBgCki(entry.getKey());
+                    if(cki != null)
+                        for(U64 k : cki)
+                            if(cki2limit.containsKey(k)){
+                                int max =  Math.max(entry.getValue(), cki2limit.get(k));
+                                cki2limit.put(k, max);
+                            }else{
+                                cki2limit.put(k, entry.getValue());
+                            }
                 }
             }
+
+            for(Map.Entry<U64, Integer> entry : cki2limit.entrySet()){
+                U64 cookie = entry.getKey();
+                Match match = flowRegistry.getMatch(cookie);
+                int limit = entry.getValue();
+                System.err.println("match = " + match);
+                System.err.println("cookie = " + cookie);
+
+
+                List<NodePortTuple> switchPortList = flowRegistry.getOldPath(cookie);
+                for (int indx = switchPortList.size() - 1; indx > 0; indx -= 2) {
+                    DatapathId switchDPID = switchPortList.get(indx).getNodeId();
+                    IOFSwitch sw = switchService.getSwitch(switchDPID);
+                    OFPort outPort = switchPortList.get(indx).getPortId();
+                    OFPort inPort = switchPortList.get(indx - 1).getPortId();
+
+                    long queueId = getCorrespondingQueueId(outPort, limit);
+
+                    OFFactory myfactory = sw.getOFFactory();
+                    OFFlowMod.Builder fmb = myfactory.buildFlowAdd();
+
+                    ArrayList<OFAction> actionsLinkSrcPort = new ArrayList<OFAction>();
+
+                    /* For OpenFlow 1.0 */
+                    if (myfactory.getVersion().compareTo(OFVersion.OF_10) == 0) {
+                        OFActionEnqueue enqueue = myfactory.actions().buildEnqueue()
+                                .setPort(outPort) /* Must specify port number */
+                                .setQueueId(queueId)
+                                .build();
+                        actionsLinkSrcPort.add(enqueue);
+
+                    } else { /* For OpenFlow 1.1+ */
+                        OFActionSetQueue setQueue = myfactory.actions().buildSetQueue()
+                                .setQueueId(queueId)
+                                .build();
+                        actionsLinkSrcPort.add(setQueue);
+                        actionsLinkSrcPort.add(myfactory.actions().buildOutput().setPort(outPort).build());
+                    }
+
+                    //
+                    U64 cookieMask =  U64.NO_MASK;
+                    //删除相应Match的流表
+                    if(myfactory.getVersion().compareTo(OFVersion.OF_10) == 0)
+                        System.err.println("to add...");
+                    else
+                        sw.write(myfactory.buildFlowDelete().setCookie(cookie).setCookieMask(cookieMask).build());
+                    //下发相应Match的流表
+
+                    Match.Builder mb = MatchUtils.convertToVersion(match, sw.getOFFactory().getVersion());
+                    mb.setExact(MatchField.IN_PORT, inPort);
+
+                    sw.write(fmb.setBufferId(OFBufferId.NO_BUFFER)
+                            .setActions(actionsLinkSrcPort)
+                            .setIdleTimeout(0)
+                            .setMatch(mb.build())
+                            .setCookie(cookie)
+                            .setOutPort(outPort)
+                            .setPriority(32676).build());
+
+                }
+
+
+            }
+
+
             unsatClient.clear();
             System.err.println("done");
         }
 
-        private void pushFlowMod(Link l, Integer limit){
-
-            Set<Match> matches = flowRegistry.getBgMatch(l);
-            Map<Match, U64> mp = flowRegistry.getBgMatch2Ck(l);
-
-            long queueId = getCorrespondingQueueId(l, limit);
-            IOFSwitch swIn = switchService.getSwitch(l.getSrc());
-//            IOFSwitch swOut = switchService.getSwitch(l.getDst());
-
-            OFFactory myfactory = swIn.getOFFactory();
-            OFFlowMod.Builder fmb = myfactory.buildFlowAdd();
-            OFFlowMod.Builder rmt = myfactory.buildFlowDelete();
-
-
-            ArrayList<OFAction> actionsLinkSrcPort = new ArrayList<OFAction>();
-
-            /* For OpenFlow 1.0 */
-            if (myfactory.getVersion().compareTo(OFVersion.OF_10) == 0) {
-                OFActionEnqueue enqueue = myfactory.actions().buildEnqueue()
-                        .setPort(l.getSrcPort()) /* Must specify port number */
-                        .setQueueId(queueId)
-                        .build();
-                actionsLinkSrcPort.add(enqueue);
-
-            } else { /* For OpenFlow 1.1+ */
-                OFActionSetQueue setQueue = myfactory.actions().buildSetQueue()
-                        .setQueueId(queueId)
-                        .build();
-                actionsLinkSrcPort.add(setQueue);
-
-            }
-
-
-            for(Match match : matches){
-                //删除相应Match的流表(通过match得到的TableId匹配)
-                swIn.write(rmt.setCookie(mp.get(match)).build());
-                //下发相应Match的流表
-                swIn.write(fmb.setBufferId(OFBufferId.NO_BUFFER)
-                        .setActions(actionsLinkSrcPort)
-                        .setIdleTimeout(30)
-                        .setHardTimeout(30)
-                        .setMatch(match)
-                        .setCookie(mp.get(match))
-                        .setOutPort(l.getSrcPort())
-                        .setPriority(32676).build());
-            }
-
-        }
-
-
+//        private void pushFlowMod(IOFSwitch sw, Link l, Integer limit){
+//
+//            Set<Match> matches = flowRegistry.getBgMatch(l);
+//            Map<Match, U64> mp = flowRegistry.getBgMatch2Ck(l);
+//
+//            long queueId = getCorrespondingQueueId(l, limit);
+//            IOFSwitch swIn = switchService.getSwitch(l.getSrc());
+////            IOFSwitch swOut = switchService.getSwitch(l.getDst());
+//
+//            OFFactory myfactory = swIn.getOFFactory();
+//            OFFlowMod.Builder fmb = myfactory.buildFlowAdd();
+//
+//            ArrayList<OFAction> actionsLinkSrcPort = new ArrayList<OFAction>();
+//
+//            /* For OpenFlow 1.0 */
+//            if (myfactory.getVersion().compareTo(OFVersion.OF_10) == 0) {
+//                OFActionEnqueue enqueue = myfactory.actions().buildEnqueue()
+//                        .setPort(l.getSrcPort()) /* Must specify port number */
+//                        .setQueueId(queueId)
+//                        .build();
+//                actionsLinkSrcPort.add(enqueue);
+//
+//            } else { /* For OpenFlow 1.1+ */
+//                OFActionSetQueue setQueue = myfactory.actions().buildSetQueue()
+//                        .setQueueId(queueId)
+//                        .build();
+//                actionsLinkSrcPort.add(setQueue);
+//                actionsLinkSrcPort.add(myfactory.actions().buildOutput().setPort(l.getSrcPort()).build());
+//
+//            }
+//
+//            for(Match match : matches){
+//                //删除相应Match的流表(通过match得到的TableId匹配)
+//                System.err.println(match);
+//                U64 cookieMask =  U64.NO_MASK;
+//                if(myfactory.getVersion().compareTo(OFVersion.OF_10) == 0)
+//                    System.err.println("to add...");
+//                else
+//                    swIn.write(myfactory.buildFlowDelete().setCookie(mp.get(match)).setCookieMask(cookieMask).build());
+//                //下发相应Match的流表
+//                swIn.write(fmb.setBufferId(OFBufferId.NO_BUFFER)
+//                        .setActions(actionsLinkSrcPort)
+//                        .setIdleTimeout(0)
+//                        .setMatch(match)
+//                        .setCookie(mp.get(match))
+//                        .setOutPort(l.getSrcPort())
+//                        .setPriority(32676).build());
+//            }
+//
+//            System.err.println("on " + l + " enqueued");
+//
+//        }
 
 
         private TableId getMatchTableId(Match m){
@@ -735,8 +845,7 @@ public class QoEdrivenAdjustment extends QoEdrivenAdjBase implements IFloodlight
         of13 queueid是全局唯一的，所以setQueue操作只需要制定端口号
          = ofportNum * interval + bps2Id
          */
-        private long getCorrespondingQueueId(Link l, Integer limit){
-            OFPort opt = l.getSrcPort();
+        private long getCorrespondingQueueId(OFPort opt, Integer limit){
             final int INTERVAL = 40;
             int bps2Id = (limit % 1000000 == 0) ? (limit / 1000000) : (limit / 1000000 + 1);
             int ans = opt.getPortNumber() * INTERVAL + bps2Id;

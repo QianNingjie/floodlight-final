@@ -268,7 +268,7 @@ public class MaxFlowSolver {
                 l = mid + 1;
         }
 
-//        System.err.println(r);
+        System.err.println("r = " + r);
         solver.solve(bandwidth, threshold, r, flowPath, linkLimit);
         return true;
     }

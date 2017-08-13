@@ -36,7 +36,9 @@ import net.floodlightcontroller.util.OFDPAUtils;
 import net.floodlightcontroller.util.OFMessageDamper;
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.action.OFActionEnqueue;
 import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
+import org.projectfloodlight.openflow.protocol.action.OFActionSetQueue;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.*;
@@ -52,9 +54,9 @@ import java.util.*;
 public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControllerCompletionListener {
     protected static Logger log = LoggerFactory.getLogger(QoEdrivenAdjBase.class);
 
-    public static int FLOWMOD_DEFAULT_IDLE_TIMEOUT = 5; // in seconds
+    public static int FLOWMOD_DEFAULT_IDLE_TIMEOUT = 30; // in seconds
     public static int FLOWMOD_DEFAULT_HARD_TIMEOUT = 0; // infinite
-    public static int FLOWMOD_DEFAULT_PRIORITY = 1; // 0 is the default table-miss flow in OF1.3+, so we need to use 1
+    public static int FLOWMOD_DEFAULT_PRIORITY = 318; // 0 is the default table-miss flow in OF1.3+, so we need to use 1
 
     protected static TableId FLOWMOD_DEFAULT_TABLE_ID = TableId.ZERO;
 
@@ -157,12 +159,7 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
      * Push routes from back to front
      * @param route Route to push
      * @param match OpenFlow fields to match on
-     * @param srcSwPort Source switch port for the first hop
-     * @param dstSwPort Destination switch port for final hop
      * @param cookie The cookie to set in each flow_mod
-     * @param cntx The floodlight context
-     * @param requestFlowRemovedNotification if set to true then the switch would
-     *        send a flow mod removal notification when the flow mod expires
      * @param flowModCommand flow mod. command to use, e.g. OFFlowMod.OFPFC_ADD,
      *        OFFlowMod.OFPFC_MODIFY etc.
      * @return true if a packet out was sent on the first-hop switch of this route
@@ -244,6 +241,28 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
 
             FlowModUtils.setActions(fmb, actions, sw);
 
+
+//
+//            ArrayList<OFAction> actionsLinkSrcPort = new ArrayList<OFAction>();
+///* For OpenFlow 1.0 */
+//            if (sw.getOFFactory().getVersion().compareTo(OFVersion.OF_10) == 0) {
+//                OFActionEnqueue enqueue = sw.getOFFactory().actions().buildEnqueue()
+//                        .setPort(outPort) /* Must specify port number */
+//                        .setQueueId(outPort.getPortNumber() * 40 + 2)
+//                        .build();
+//                actionsLinkSrcPort.add(enqueue);
+//
+//            } else { /* For OpenFlow 1.1+ */
+//                OFActionSetQueue setQueue = sw.getOFFactory().actions().buildSetQueue()
+//                        .setQueueId(outPort.getPortNumber() * 40 + 2)
+//                        .build();
+//                actionsLinkSrcPort.add(setQueue);
+//                actionsLinkSrcPort.add(sw.getOFFactory().actions().buildOutput().setPort(outPort).build());
+//            }
+//            FlowModUtils.setActions(fmb, actionsLinkSrcPort, sw);
+
+
+
             /* Configure for particular switch pipeline */
             if (sw.getOFFactory().getVersion().compareTo(OFVersion.OF_10) != 0) {
                 fmb.setTableId(FLOWMOD_DEFAULT_TABLE_ID);
@@ -292,7 +311,6 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
      * @param pi packet-in
      * @param outport output port
      * @param useBufferedPacket use the packet buffered at the switch, if possible
-     * @param cntx context of the packet
      */
     protected void pushPacket(IOFSwitch sw, OFPacketIn pi, OFPort outport, boolean useBufferedPacket) {
         if (pi == null) {
@@ -343,122 +361,26 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
     	for(int indx =  switchPortList.size() - 1; indx > 0; indx -= 2){
     		 DatapathId switchDPID = switchPortList.get(indx).getNodeId();
     		 IOFSwitch sw = switchService.getSwitch(switchDPID);
-    		 
+             OFFactory myfactory = sw.getOFFactory();
+             System.err.println(sw);
+
     		 if (sw == null) {
                  if (log.isWarnEnabled()) {
-                     log.warn("Unable to push route, switch at DPID {} " + "not available", switchDPID);
+                     log.warn("Unable to remove flow, switch at DPID {} " + "not available", switchDPID);
                  }
                  return;
              }
     		 
     		 U64 cookieMask =  U64.NO_MASK;
-    		 OFMessage msg = sw.getOFFactory().buildFlowDelete().
-    				 setCookie(cookie).setCookieMask(cookieMask).build();
-    		 messageDamper.write(sw, msg);
+
+             if (myfactory.getVersion().compareTo(OFVersion.OF_10) == 0)
+                 System.err.println("to add..");
+             else
+                 messageDamper.write(sw, myfactory.buildFlowDelete().
+                         setCookie(cookie).setCookieMask(cookieMask).build());
     	}
     }
-    /**
-     * Write packetout message to sw with output actions to one or more
-     * output ports with inPort/outPorts passed in.
-     * @param packetData
-     * @param sw
-     * @param inPort
-     * @param ports
-     * @param cntx
-     */
-    public void packetOutMultiPort(byte[] packetData, IOFSwitch sw,
-                                   OFPort inPort, Set<OFPort> outPorts, FloodlightContext cntx) {
-        //setting actions
-        List<OFAction> actions = new ArrayList<OFAction>();
 
-        Iterator<OFPort> j = outPorts.iterator();
-
-        while (j.hasNext()) {
-            actions.add(sw.getOFFactory().actions().output(j.next(), 0));
-        }
-
-        OFPacketOut.Builder pob = sw.getOFFactory().buildPacketOut();
-        pob.setActions(actions);
-
-        pob.setBufferId(OFBufferId.NO_BUFFER);
-        pob.setInPort(inPort);
-
-        pob.setData(packetData);
-
-        if (log.isTraceEnabled()) {
-            log.trace("write broadcast packet on switch-id={} " +
-                    "interfaces={} packet-out={}",
-                    new Object[] {sw.getId(), outPorts, pob.build()});
-        }
-        messageDamper.write(sw, pob.build());
-    }
-
-    /**
-     * @see packetOutMultiPort
-     * Accepts a PacketIn instead of raw packet data. Note that the inPort
-     * and switch can be different than the packet in switch/port
-     */
-    public void packetOutMultiPort(OFPacketIn pi, IOFSwitch sw,
-                                   OFPort inPort, Set<OFPort> outPorts, FloodlightContext cntx) {
-        packetOutMultiPort(pi.getData(), sw, inPort, outPorts, cntx);
-    }
-
-    /**
-     * @see packetOutMultiPort
-     * Accepts an IPacket instead of raw packet data. Note that the inPort
-     * and switch can be different than the packet in switch/port
-     */
-    public void packetOutMultiPort(IPacket packet, IOFSwitch sw,
-                                   OFPort inPort, Set<OFPort> outPorts, FloodlightContext cntx) {
-        packetOutMultiPort(packet.serialize(), sw, inPort, outPorts, cntx);
-    }
-
-    public boolean blockHost(IOFSwitchService switchService,
-                             SwitchPort sw_tup, MacAddress host_mac, short hardTimeout, U64 cookie) {
-
-        if (sw_tup == null) {
-            return false;
-        }
-
-        IOFSwitch sw = switchService.getSwitch(sw_tup.getNodeId());
-        if (sw == null) {
-            return false;
-        }
-
-        OFPort inputPort = sw_tup.getPortId();
-        if (log.isDebugEnabled()) {
-            log.debug("blockHost sw={} port={} mac={}",
-                    new Object[] { sw, sw_tup.getPortId(), host_mac.getLong() });
-        }
-
-        // Create flow-mod based on packet-in and src-switch
-        OFFlowMod.Builder fmb = sw.getOFFactory().buildFlowAdd();
-
-        Match.Builder mb = sw.getOFFactory().buildMatch();
-        List<OFAction> actions = new ArrayList<OFAction>(); // Set no action to drop
-        mb.setExact(MatchField.IN_PORT, inputPort);
-        if (host_mac.getLong() != -1L) {
-            mb.setExact(MatchField.ETH_SRC, host_mac);
-        }
-
-        fmb.setCookie(cookie)
-        .setHardTimeout(hardTimeout)
-        .setIdleTimeout(FLOWMOD_DEFAULT_IDLE_TIMEOUT)
-        .setPriority(FLOWMOD_DEFAULT_PRIORITY)
-        .setBufferId(OFBufferId.NO_BUFFER)
-        .setMatch(mb.build());
-
-        FlowModUtils.setActions(fmb, actions, sw);
-
-        if (log.isDebugEnabled()) {
-            log.debug("write drop flow-mod sw={} match={} flow-mod={}",
-                    new Object[] { sw, mb.build(), fmb.build() });
-        }
-
-        messageDamper.write(sw, fmb.build());
-
-        return true;
-    }
 
     @Override
     public boolean isCallbackOrderingPrereq(OFType type, String name) {

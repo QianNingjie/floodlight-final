@@ -5,6 +5,7 @@ import net.floodlightcontroller.linkdiscovery.Link;
 import net.floodlightcontroller.routing.Path;
 import org.projectfloodlight.openflow.protocol.OFFlowRemovedReason;
 import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.IPAddress;
 import org.projectfloodlight.openflow.types.IPv4Address;
@@ -90,6 +91,15 @@ public class FlowRegistry {
         return null;
     }
 
+    Set<U64> getBgCki(Link link){
+        if(linkToFlow.containsKey(link)){
+            return linkToFlow.get(link)[1];
+        }else{
+            System.err.println("link doesn't exist");
+            return null;
+        }
+    }
+
     //获取链路上的视频流数量
     int getNumOfVip(Link link){
         if(linkToFlow.containsKey(link))
@@ -114,9 +124,9 @@ public class FlowRegistry {
 
     //获取cookie对应vip流的宿主机(客户端)所连的交换机
     int getClientAp(U64 cookie){
-        if(flowToPath.containsKey(cookie)){
-            List<NodePortTuple> nptList = flowToPath.get(cookie).getPath();
-            return (int)nptList.get(nptList.size()-1).getNodeId().getLong();
+        if(flowMatch.containsKey(cookie)){
+            Match match = flowMatch.get(cookie);
+            return (int)flowMatch.get(cookie).get(MatchField.ETH_DST).getLong();
         }else return -1;
     }
 
@@ -149,28 +159,35 @@ public class FlowRegistry {
         }
     }
 
-    void update(U64 cookie, List<NodePortTuple> oldPath, List<Link> linkList, Path newPath){
-        flowToPath.put(cookie, newPath);
+    void update(U64 oldCki, U64 newCki, List<NodePortTuple> oldPath, List<Link> linkList, Path newPath, IPv4Address ip){
+        flowToPath.put(newCki, newPath);
 
         //remove vip flow from old links
 //        System.err.println("oldPath : " + oldPath);
 //        System.err.println("newPath : " + newPath);
-        for(int i = 1; i < oldPath.size()-1; i += 2){
+        for(int i = 1; i < oldPath.size()-2; i += 2){
             NodePortTuple npt1 = oldPath.get(i);
             NodePortTuple npt2 = oldPath.get(i+1);
             Link link = new Link(npt1.getNodeId(),npt1.getPortId(), npt2.getNodeId(), npt2.getPortId(), U64.ZERO);
             boolean flag = false;
             if(linkToFlow.containsKey(link))
-                flag = linkToFlow.get(link)[0].remove(cookie);
-            else
+                flag = linkToFlow.get(link)[0].remove(oldCki);
+            else{
                 System.err.print(link + " disappear");
+                System.err.print(oldPath);
+            }
 
             if(!flag) throw new RuntimeException("why??");
         }
 
         //add new
         for(Link link :linkList)
-            addToLtf(link, cookie, 0);
+            addToLtf(link, newCki, 0);
+
+        Match match = flowMatch.remove(oldCki);
+        flowMatch.put(newCki, match);
+
+        ipToCki.put(ip, newCki);
     }
 
 
