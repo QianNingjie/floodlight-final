@@ -240,7 +240,7 @@ public class MaxFlowSolver {
         }
     }
 
-    public static boolean rearrangeFlow(Set<Link> links, int n, Map<Link, Integer> linkIdle,
+    public static boolean  rearrangeFlow(Set<Link> links, int n, Map<Link, Integer> linkIdle,
                                         Map<Link, Integer> linkBg, int flowSrc, List<Integer> flowDst,
                                         int bandwidth, int threshold, List<List<Link>> flowPath, Map<Link, Integer> linkLimit) {
         int maxBandwidth = 0, minBandwidth = 0;
@@ -268,7 +268,7 @@ public class MaxFlowSolver {
                 l = mid + 1;
         }
 
-        System.err.println("r = " + r);
+//        System.err.println("r = " + r);
         solver.solve(bandwidth, threshold, r, flowPath, linkLimit);
         return true;
     }

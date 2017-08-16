@@ -362,7 +362,6 @@ public abstract class QoEdrivenAdjBase implements IOFMessageListener, IControlle
     		 DatapathId switchDPID = switchPortList.get(indx).getNodeId();
     		 IOFSwitch sw = switchService.getSwitch(switchDPID);
              OFFactory myfactory = sw.getOFFactory();
-             System.err.println(sw);
 
     		 if (sw == null) {
                  if (log.isWarnEnabled()) {

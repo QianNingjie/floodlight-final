@@ -3,12 +3,15 @@ package net.floodlightcontroller.qoedrivenadjustment;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import sun.misc.BASE64Encoder;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.security.MessageDigest;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,12 +21,13 @@ import java.util.regex.Pattern;
 /**
  * Created by ningjieqian on 17/7/18.
  */
-public class ComplainCollector implements Runnable{
-    private static final int listeningPort = 5000;
-    private Set<IPv4Address> unsatClient;
+public class FTPComplainCollector implements Runnable{
+    private static final int listeningPort = 7000;
+    private Map<IPv4Address, Integer> unsatFtpClient;
+    private static int limitLevel = 10;
 
-    public ComplainCollector(Set<IPv4Address> unsatClient){
-        this.unsatClient = unsatClient;
+    public FTPComplainCollector(Map<IPv4Address, Integer> unsatFtpClient){
+        this.unsatFtpClient = unsatFtpClient;
     }
 
     public void run(){
@@ -31,7 +35,7 @@ public class ComplainCollector implements Runnable{
         try(ServerSocket ss = new ServerSocket(listeningPort)){
             while(true){
                 Socket socket = ss.accept();
-                System.err.println("video client " + socket.getInetAddress() + " connected");
+                System.err.println("FTP client "+ socket.getInetAddress() + " connected");
                 executor.execute(new Collect(socket));
             }
         }catch(IOException e){
@@ -53,11 +57,14 @@ public class ComplainCollector implements Runnable{
 
                     while(true){
                         String msg = receive();
-                        System.err.println("bufferLevel = " + msg);
+                        System.err.println("QoE feedback : " + msg);
                         try{
-                            Double bufferLevel = Double.parseDouble(msg);
+                            if(msg.equals("good"))
+                                limitLevel = 10;
+                            else if(limitLevel > 4)
+                                limitLevel -= 4;
                             Inet4Address ipv4 = (Inet4Address) socket.getInetAddress();
-                            unsatClient.add(IPv4Address.of(ipv4.getAddress()));
+                            unsatFtpClient.put(IPv4Address.of(ipv4.getAddress()), limitLevel);
                         } catch(NumberFormatException e){
                         }
 

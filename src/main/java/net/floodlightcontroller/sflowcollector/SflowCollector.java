@@ -105,7 +105,7 @@ public class SflowCollector implements IFloodlightModule, ISflowCollectionServic
 			System.err.println("Could not load sFlow-RT URI configuration file");
 			System.exit(1);
 		}else{
-			System.out.println(sFlowRTURI);
+//			System.out.println(sFlowRTURI);
 		}
 		//设置收集任务的参数
 		firstDelay = DEFAULT_FIRST_DELAY;
